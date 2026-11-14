@@ -56,6 +56,11 @@ class JsonStore:
         self.path.mkdir(parents=True, exist_ok=True)
         # Per-instance cache for repeated test_history calls within one command.
         self._cache: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
+        # Cache of parsed Run objects keyed by file path, so repeated
+        # test_history calls for different tests don't re-read the same file.
+        self._run_cache: dict[Path, Run | None] = {}
+        # Lazy-built index of test_name -> history entries (since=None only).
+        self._test_index: dict[str, list[dict[str, Any]]] | None = None
 
     # -- internal helpers -------------------------------------------------
 
@@ -97,13 +102,19 @@ class JsonStore:
 
     def _read_run_file(self, path: Path) -> Run | None:
         """Parse a single run file, returning None on corrupt/unknown schema."""
+        # Check cache first.
+        if path in self._run_cache:
+            return self._run_cache[path]
+
         try:
             size = path.stat().st_size
         except OSError as exc:
             logger.warning("cannot stat %s: %s", path, exc)
+            self._run_cache[path] = None
             return None
         if size > DEFAULT_MAX_FILE_SIZE:
             logger.warning("file %s exceeds size limit, skipping", path)
+            self._run_cache[path] = None
             return None
 
         try:
@@ -111,10 +122,12 @@ class JsonStore:
                 data = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("skipping corrupt run file %s: %s", path, exc)
+            self._run_cache[path] = None
             return None
 
         if not isinstance(data, dict):
             logger.warning("skipping non-object run file %s", path)
+            self._run_cache[path] = None
             return None
         if data.get("schema_version") != SCHEMA_VERSION:
             logger.warning(
@@ -122,18 +135,24 @@ class JsonStore:
                 data.get("schema_version"),
                 path,
             )
+            self._run_cache[path] = None
             return None
 
         run_data = data.get("run")
         if not isinstance(run_data, dict):
             logger.warning("skipping run file %s without a 'run' object", path)
+            self._run_cache[path] = None
             return None
 
         try:
-            return Run.model_validate(run_data)
+            run = Run.model_validate(run_data)
         except Exception as exc:  # noqa: BLE001 - corrupt file is skipped
             logger.warning("skipping invalid run data in %s: %s", path, exc)
+            self._run_cache[path] = None
             return None
+
+        self._run_cache[path] = run
+        return run
 
     # -- Store protocol ---------------------------------------------------
 
@@ -162,6 +181,7 @@ class JsonStore:
                 os.fsync(fh.fileno())
             os.replace(tmp_name, target)
             tmp_name = None
+            self._test_index = None  # new run invalidates the test index
         except Exception:  # noqa: BLE001 - wrap all save failures in StorageError
             raise StorageError(f"failed to save run {run.id}") from None
         finally:
@@ -214,17 +234,24 @@ class JsonStore:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        since_ts = since.strftime("%Y%m%dT%H%M%S") if since else None
+        # When since is None, use a pre-built index for O(1) lookups.
+        if since is None:
+            if self._test_index is None:
+                self._test_index = self._build_test_index()
+            indexed: list[dict[str, Any]] = self._test_index.get(name, [])
+            self._cache[cache_key] = indexed
+            return indexed
+
+        since_ts = since.strftime("%Y%m%dT%H%M%S")
         history: list[dict[str, Any]] = []
         for path in self._list_run_files():
-            if since_ts is not None:
-                ts = _parse_filename_timestamp(path.name)
-                if ts is not None and ts < since_ts:
-                    break
+            ts = _parse_filename_timestamp(path.name)
+            if ts is not None and ts < since_ts:
+                break
             run = self._read_run_file(path)
             if run is None:
                 continue
-            if since is not None and run.created_at < since:
+            if run.created_at < since:
                 continue
             for result in run.results:
                 if result.name != name:
@@ -240,6 +267,27 @@ class JsonStore:
                 )
         self._cache[cache_key] = history
         return history
+
+    def _build_test_index(self) -> dict[str, list[dict[str, Any]]]:
+        """Build an index of test_name -> history entries (since=None).
+
+        Iterates through all runs once, grouping results by test name.
+        """
+        index: dict[str, list[dict[str, Any]]] = {}
+        for path in self._list_run_files():
+            run = self._read_run_file(path)
+            if run is None:
+                continue
+            for result in run.results:
+                entry = {
+                    "run_id": run.id,
+                    "commit": run.commit,
+                    "branch": run.branch,
+                    "created_at": run.created_at.isoformat(),
+                    "status": result.status,
+                }
+                index.setdefault(result.name, []).append(entry)
+        return index
 
     def past_failures_for_fingerprint(
         self, fingerprint: str, limit: int = 10

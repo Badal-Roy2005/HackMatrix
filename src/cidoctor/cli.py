@@ -7,6 +7,7 @@ Block 1 provided the Typer app with ``--version`` and ``--verbose`` only.
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,10 @@ from cidoctor.core.analysis import analyze as _run_analysis
 from cidoctor.core.config import Settings
 from cidoctor.core.logging import setup_logging
 from cidoctor.core.models import AnalysisReport, FlakyVerdict, TestResult
+from cidoctor.core.routing import resolve_model
 from cidoctor.providers import default_registry
+from cidoctor.providers.gemini import GeminiAgentModel, GeminiProvider
+from cidoctor.providers.ollama import OllamaAgentModel, OllamaProvider
 from cidoctor.storage import JsonStore
 
 app = typer.Typer(
@@ -167,7 +171,7 @@ def analyze(
         raise typer.Exit(code=1)
 
     if format == "json":
-        console.print(report.model_dump_json(indent=2))
+        print(report.model_dump_json(indent=2))
     else:
         _print_analysis_table(report)
 
@@ -205,7 +209,7 @@ def flaky(
     verdicts = analyzer.flaky(since=since_dt)
 
     if format == "json":
-        console.print(
+        print(
             json.dumps(
                 [v.model_dump() for v in verdicts], indent=2, default=str
             )
@@ -467,4 +471,226 @@ def explain(
             border_style="blue",
         )
         console.print(panel)
+
+
+@app.command()
+def launch(
+    run_id: str = typer.Argument(
+        "latest", help="Run id or 'latest'."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", "-m", help="Model name (e.g. gemini-1.5-flash, llama3)."
+    ),
+    config: bool = typer.Option(
+        False, "--config", help="Save the model choice to cidoctor.toml and exit."
+    ),
+) -> None:
+    """Discover models, pick one, and run the agent investigation."""
+    import tomli_w
+
+    from cidoctor.agent.loop import InvestigationContext, investigate
+    from cidoctor.core.errors import ConfigError, ProviderError
+
+    settings = Settings()
+    store = JsonStore(settings.store_path)
+
+    # Discover installed Ollama models.
+    ollama = OllamaProvider(host=settings.ollama_host)
+    try:
+        installed = ollama.list_models()
+    except ProviderError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        installed = []
+
+    # Build the candidate list: Gemini first (if API key set), then Ollama.
+    candidates: list[str] = []
+    if os.environ.get("GEMINI_API_KEY"):
+        candidates.append(settings.model or "gemini-1.5-flash")
+    candidates.extend(installed)
+
+    if not candidates:
+        console.print(
+            "[red]No models available.[/red]\n"
+            "Install Ollama and pull a model: ollama pull llama3\n"
+            "Or set GEMINI_API_KEY to use Gemini."
+        )
+        raise typer.Exit(code=1)
+
+    # Choose model.
+    chosen = model
+    if chosen is None:
+        console.print("[bold]Available models:[/bold]")
+        for i, name in enumerate(candidates, 1):
+            console.print(f"  {i}. {name}")
+        choice = typer.prompt("Select a model", default="1")
+        try:
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(candidates):
+                raise ValueError
+            chosen = candidates[idx]
+        except (ValueError, TypeError):
+            console.print("[red]Invalid selection.[/red]")
+            raise typer.Exit(code=1)
+
+    # Save choice to cidoctor.toml.
+    toml_path = Path("cidoctor.toml")
+    data: dict[str, Any] = {}
+    if toml_path.exists():
+        import tomllib
+
+        with toml_path.open("rb") as fh:
+            data = tomllib.load(fh)
+    data.setdefault("cidoctor", {})["model"] = chosen
+    toml_bytes = tomli_w.dumps(data).encode("utf-8")
+    toml_path.write_bytes(toml_bytes)
+    console.print(f"[green]Saved model choice: {chosen}[/green]")
+
+    if config:
+        raise typer.Exit(code=0)
+
+    # Resolve provider spec.
+    try:
+        spec = resolve_model(chosen, installed)
+    except ConfigError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    # Get the run.
+    run = store.get_run(run_id)
+    if run is None:
+        console.print(f"[red]Run {run_id!r} not found.[/red]")
+        raise typer.Exit(code=1)
+
+    # Select provider and model.
+    if spec.provider == "gemini":
+        provider: Any = GeminiProvider(model=spec.model)
+        agent_model: Any = GeminiAgentModel(model=spec.model)
+    else:
+        provider = OllamaProvider(host=settings.ollama_host, model=spec.model)
+        agent_model = OllamaAgentModel(host=settings.ollama_host, model=spec.model)
+
+    context = InvestigationContext(
+        store=store,
+        repo_root=str(Path.cwd()),
+        run_id=run.id,
+        provider=provider,
+    )
+
+    def on_event(event: str, message: str) -> None:
+        if event == "calling":
+            console.print(f"[dim]investigating: {message}[/dim]")
+
+    try:
+        result = investigate(
+            model=agent_model,
+            context=context,
+            on_event=on_event,
+        )
+    except ProviderError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    diagnosis = result.diagnosis
+    if result.mode == "fallback":
+        console.print("[yellow](agent fell back to single-request diagnosis)[/yellow]")
+
+    if os.environ.get("CI_DOCTOR_FORMAT") == "json":
+        console.print(diagnosis.model_dump_json(indent=2))
+    else:
+        panel = Panel(
+            f"[bold]Root cause:[/bold] {diagnosis.root_cause}\n"
+            f"[bold]Category:[/bold] {diagnosis.category}\n"
+            f"[bold]Suggested fix:[/bold] {diagnosis.suggested_fix}\n"
+            f"[bold]Confidence:[/bold] {diagnosis.confidence:.2f}",
+            title="Diagnosis",
+            border_style="blue",
+        )
+        console.print(panel)
+
+
+@app.command()
+def comment(
+    run_id: str = typer.Argument(
+        "latest", help="Run id or 'latest'."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the comment body instead of posting."
+    ),
+) -> None:
+    """Post a CI Doctor report as a GitHub PR comment."""
+    from cidoctor.core.errors import ProviderError
+    from cidoctor.core.fingerprint import group_failures
+    from cidoctor.core.flaky import evaluate_test
+    from cidoctor.integrations.github import (
+        _detect_pr_number,
+        format_comment,
+        post_or_update_comment,
+    )
+
+    settings = Settings()
+    store = JsonStore(settings.store_path)
+
+    run = store.get_run(run_id)
+    if run is None:
+        console.print(f"[red]Run {run_id!r} not found.[/red]")
+        raise typer.Exit(code=1)
+
+    # Build AnalysisReport for this run.
+    groups = group_failures(run.results)
+    flaky_tests = []
+    test_names = {r.name for r in run.results}
+    for name in sorted(test_names):
+        history = store.test_history(name, since=None)
+        verdict = evaluate_test(
+            history,
+            threshold=settings.threshold,
+            min_runs=settings.min_runs,
+            main_branch=settings.main_branch,
+            test=name,
+        )
+        flaky_tests.append(verdict)
+
+    from cidoctor.core.models import AnalysisReport
+
+    report = AnalysisReport(
+        run=run,
+        failure_groups=groups,
+        flaky_tests=flaky_tests,
+    )
+
+    body = format_comment(report)
+
+    if dry_run:
+        console.print(body)
+        raise typer.Exit(code=0)
+
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        console.print("[red]Error: GITHUB_TOKEN environment variable is not set.[/red]")
+        raise typer.Exit(code=1)
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        console.print(
+            "[red]Error: GITHUB_REPOSITORY environment variable is not set.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    pr_number = _detect_pr_number()
+    if pr_number is None:
+        console.print(
+            "[red]Error: Could not detect PR number from GITHUB_EVENT_PATH "
+            "or GITHUB_REF.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        post_or_update_comment(repo, pr_number, body, token)
+    except ProviderError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(
+        f"[green]Comment posted to {repo}#{pr_number}.[/green]"
+    )
+
 

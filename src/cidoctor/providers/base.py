@@ -112,11 +112,15 @@ def _load_entry_point(entry_point: Any) -> object | None:
 
 
 def default_registry() -> ProviderRegistry:
-    """Return a registry pre-loaded with the built-in Gemini provider."""
+    """Return a registry pre-loaded with the built-in providers."""
     from cidoctor.providers.gemini import GeminiProvider
+    from cidoctor.providers.mock import MockProvider
+    from cidoctor.providers.ollama import OllamaProvider
 
     registry = ProviderRegistry()
     registry.register(GeminiProvider())
+    registry.register(OllamaProvider())
+    registry.register(MockProvider())
     return registry
 
 

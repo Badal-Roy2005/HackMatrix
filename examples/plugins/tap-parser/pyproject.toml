@@ -1,0 +1,18 @@
+[project]
+name = "tap-parser"
+version = "0.1.0"
+description = "Example TAP parser plugin for CI Doctor"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[project.entry-points."cidoctor.parsers"]
+tap = "tap_parser.parser:TAPParserFactory"

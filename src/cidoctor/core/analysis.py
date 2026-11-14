@@ -161,3 +161,6 @@ def _run_id(commit: str, branch: str) -> str:
     safe_commit = "".join(c for c in commit if c.isalnum() or c in {"-", "_"})[:40]
     safe_branch = "".join(c for c in branch if c.isalnum() or c in {"-", "_"})[:40]
     return f"{safe_branch}-{safe_commit[:12]}"
+
+
+__all__ = ["AnalysisReport", "analyze"]

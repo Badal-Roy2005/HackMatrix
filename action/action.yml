@@ -1,0 +1,53 @@
+name: 'CI Doctor'
+description: 'Investigate failing CI runs and comment on PRs'
+inputs:
+  results:
+    description: 'Path to the JUnit XML results file'
+    required: true
+  log:
+    description: 'Path to a log file (optional)'
+    required: false
+    default: ''
+  provider:
+    description: 'AI provider (gemini, ollama, mock)'
+    required: false
+    default: 'mock'
+  model:
+    description: 'Model name (e.g. gemini-1.5-flash, llama3)'
+    required: false
+    default: ''
+  comment:
+    description: 'Whether to post a comment on the PR (true/false)'
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install cidoctor
+      run: pip install cidoctor
+
+    - name: Run cidoctor analyze
+      id: analyze
+      run: |
+        cidoctor analyze ${{ inputs.results }} --log ${{ inputs.log }} --format json > analysis.json || true
+
+    - name: Run cidoctor explain
+      id: explain
+      run: |
+        cidoctor explain latest --provider ${{ inputs.provider }} ${{ inputs.model && format('--model {0}', inputs.model) }} --format json > diagnosis.json || true
+
+    - name: Comment on PR
+      if: ${{ inputs.comment == 'true' }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+        GITHUB_REF: ${{ github.ref }}
+      run: |
+        cidoctor comment latest --dry-run > comment_body.md || true
+        cidoctor comment latest

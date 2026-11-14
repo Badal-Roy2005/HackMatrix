@@ -1,0 +1,32 @@
+name: CI Doctor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cidoctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install cidoctor
+        run: pip install cidoctor
+
+      - name: Run tests and produce JUnit XML
+        run: |
+          pip install pytest
+          pytest --junitxml=test-results.xml || true
+
+      - name: CI Doctor analyze, explain, comment
+        uses: ./action
+        with:
+          results: test-results.xml
+          provider: mock
+          comment: true

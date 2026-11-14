@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 cidoctor = "cidoctor.cli:app"
 
 [tool.hatch.build]
-packages = ["src/cidoctor"]
+include-dir = "src"
 
 [dependency-groups]
 dev = [
@@ -38,6 +38,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "performance: performance tests",
+    "security: security checklist tests",
+]
 addopts = []
 
 [tool.ruff]
