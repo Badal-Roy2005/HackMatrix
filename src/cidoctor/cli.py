@@ -343,6 +343,9 @@ def explain(
     model: str | None = typer.Option(
         None, "--model", help="Model name (provider-specific)."
     ),
+    agent: bool = typer.Option(
+        True, "--agent/--no-agent", help="Use the investigation agent (default on)."
+    ),
     format: str = typer.Option(
         "table", "--format", help="Output format: table or json."
     ),
@@ -414,12 +417,43 @@ def explain(
     if model is not None and hasattr(provider_instance, "_model"):
         provider_instance._model = model
 
-    # Call the provider.
-    try:
-        diagnosis = provider_instance.diagnose(evidence)
-    except ProviderError as exc:
-        console.print(f"[red]Error: {exc}[/red]")
-        raise typer.Exit(code=1)
+    if agent:
+        # Agent path: investigation loop with tool calls.
+        from cidoctor.agent.loop import InvestigationContext, investigate
+        from cidoctor.providers.gemini import GeminiAgentModel
+
+        agent_model = GeminiAgentModel(model=model, client=None)
+        context = InvestigationContext(
+            store=store,
+            repo_root=str(Path.cwd()),
+            run_id=run.id,
+            provider=provider_instance,
+        )
+
+        def on_event(event: str, message: str) -> None:
+            if event == "calling":
+                console.print(f"[dim]investigating: {message}[/dim]")
+
+        try:
+            result = investigate(
+                model=agent_model,
+                context=context,
+                on_event=on_event,
+            )
+        except ProviderError as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            raise typer.Exit(code=1)
+
+        diagnosis = result.diagnosis
+        if result.mode == "fallback":
+            console.print("[yellow](agent fell back to single-request diagnosis)[/yellow]")
+    else:
+        # Single-request path.
+        try:
+            diagnosis = provider_instance.diagnose(evidence)
+        except ProviderError as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            raise typer.Exit(code=1)
 
     if format == "json":
         console.print(diagnosis.model_dump_json(indent=2))

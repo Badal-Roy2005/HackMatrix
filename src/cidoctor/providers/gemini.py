@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cidoctor.core.config import Settings
 from cidoctor.core.errors import ProviderError
 from cidoctor.core.models import Diagnosis
 from cidoctor.core.redact import redact
 from cidoctor.providers.base import Evidence
+
+if TYPE_CHECKING:
+    from cidoctor.agent.loop import Final, ToolCall
+
+from google.genai import types
 
 _REQUEST_TIMEOUT_SECONDS = 60
 _MAX_RETRIES = 3
@@ -184,3 +189,107 @@ def _is_retryable(exc: Exception) -> bool:
         if token in exc_text:
             return True
     return False
+
+
+class GeminiAgentModel:
+    """Gemini agent model using manual function calling.
+
+    Disables automatic function calling so every tool call can be counted
+    and shown to the user. Implements :class:~cidoctor.agent.loop.AgentModel.
+    """
+
+    name = "gemini-agent"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        client: Any = None,
+    ) -> None:
+        self._model = model or "gemini-1.5-flash"
+        self.client = client
+
+    def _ensure_client(self) -> Any:
+        if self.client is None:
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise ProviderError(
+                    "GEMINI_API_KEY environment variable is not set"
+                )
+            from google import genai
+
+            self.client = genai.Client(api_key=api_key)
+        return self.client
+
+    def step(
+        self,
+        history: list[dict[str, Any]],
+        tool_declarations: list[dict[str, Any]],
+    ) -> ToolCall | Final:
+        """Run one step: call the model, return a tool call or final answer."""
+        from cidoctor.agent.loop import Final, ToolCall
+
+        client = self._ensure_client()
+
+        # Convert tool declarations to google-genai function declarations.
+        tools = [
+            types.FunctionDeclaration(
+                name=decl["name"],
+                description=decl.get("description", ""),
+                parameters=decl.get("parameters", {}),
+            )
+            for decl in tool_declarations
+        ]
+
+        # Build contents from history.
+        contents: list[Any] = []
+        for msg in history:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "tool":
+                contents.append(
+                    types.Content(
+                        role="function",
+                        parts=[types.Part(function_response=types.FunctionResponse(
+                            name=msg.get("name", "unknown"),
+                            response={"output": content},
+                        ))],
+                    )
+                )
+            else:
+                contents.append(types.Content(role=role, parts=[types.Part(text=content)]))
+
+        try:
+            response = client.models.generate_content(
+                model=self._model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(function_declarations=tools)] if tools else None,
+                    tool_config=types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.NONE
+                        )
+                    ),
+                ),
+                http_options=types.HttpOptions(
+                    timeout=_REQUEST_TIMEOUT_SECONDS * 1000
+                ),
+            )
+        except Exception as exc:  # agent boundary
+            raise ProviderError(f"Gemini agent step failed: {exc}") from exc
+
+        # Check for function calls.
+        candidates = response.candidates or []
+        for candidate in candidates:
+            parts = candidate.content.parts or []
+            for part in parts:
+                fc = part.function_call
+                if fc is not None:
+                    args = dict(fc.args) if fc.args else {}
+                    return ToolCall(name=fc.name, args=args)
+
+        # No function call -> treat text as final answer.
+        text = response.text or ""
+        return Final(text=text)
+
+
+__all__ = ["GeminiAgentModel", "GeminiProvider"]
