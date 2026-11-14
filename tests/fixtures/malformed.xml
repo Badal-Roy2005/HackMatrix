@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="broken" tests="1">
+    <testcase name="test_unclosed" classname="mod" time="1.0">
+      <failure message="no close" type="Error">
+  <testcase name="orphan" classname="mod" time="1.0"/>

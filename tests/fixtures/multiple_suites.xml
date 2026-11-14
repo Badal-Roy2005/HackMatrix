@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="suite.one" tests="2" failures="1" time="3.0">
+    <testcase name="test_alpha" classname="mod.one" time="1.5"/>
+    <testcase name="test_beta" classname="mod.one" time="1.5">
+      <failure message="beta failed" type="ValueError">ValueError: beta failed
+  File "mod/one.py", line 10, in test_beta
+    raise ValueError("beta failed")</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="suite.two" tests="1" errors="1" time="2.0">
+    <testcase name="test_gamma" classname="mod.two" time="2.0">
+      <error message="gamma crashed" type="RuntimeError">RuntimeError: gamma crashed
+  File "mod/two.py", line 3, in test_gamma
+    oops()</error>
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE testsuite [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<testsuites>
+  <testsuite name="xxe" tests="1">
+    <testcase name="test_xee" classname="mod" time="1.0">
+      <failure message="&xxe;" type="Error">&xxe;</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

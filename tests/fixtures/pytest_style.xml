@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="pytest" tests="4" failures="2" errors="1" skipped="1" time="10.5">
+  <testsuite name="pytest" file="test_login.py" tests="4" failures="2" errors="1" skipped="1" time="10.5" timestamp="2026-11-14T12:00:00">
+    <testcase name="test_login_success" classname="tests.test_login" file="test_login.py" line="10" time="1.2"/>
+    <testcase name="test_login_failure" classname="tests.test_login" file="test_login.py" line="20" time="0.8">
+      <failure message="assert expected == actual" type="AssertionError">assert expected == actual
+  File "test_login.py", line 25, in test_login_failure
+    assert expected == actual
+AssertionError: assert expected == actual</failure>
+      <system-out>logged in user</system-out>
+    </testcase>
+    <testcase name="test_login_failure_again" classname="tests.test_login" file="test_login.py" line="30" time="0.9">
+      <failure message="assert expected == actual" type="AssertionError">assert expected == actual
+  File "test_login.py", line 25, in test_login_failure_again
+    assert expected == actual
+AssertionError: assert expected == actual</failure>
+    </testcase>
+    <testcase name="test_login_error" classname="tests.test_login" file="test_login.py" line="40" time="1.1">
+      <error message="connection refused" type="ConnectionError">ConnectionError: connection refused
+  File "test_login.py", line 40, in test_login_error
+    connect()
+ConnectionError: connection refused</error>
+    </testcase>
+    <testcase name="test_login_skipped" classname="tests.test_login" file="test_login.py" line="50" time="0.0">
+      <skipped message="no network" type="SkipException"/>
+    </testcase>
+  </testsuite>
+</testsuites>

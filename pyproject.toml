@@ -1,0 +1,48 @@
+[project]
+name = "cidoctor"
+version = "0.1.0"
+description = "CI Doctor: investigates failing CI runs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer",
+    "rich",
+    "pydantic>=2",
+    "defusedxml",
+    "rapidfuzz",
+    "httpx",
+    "google-genai",
+    "tomli-w",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+cidoctor = "cidoctor.cli:app"
+
+[tool.hatch.build]
+packages = ["src/cidoctor"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = []
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

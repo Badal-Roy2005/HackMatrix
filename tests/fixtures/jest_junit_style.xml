@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="jest" timestamp="2026-11-14T12:00:00" hostname="ci" tests="3" failures="1" time="5.0">
+    <testcase name="should render button" classname="Button.test" file="Button.test.js" line="5" time="0.3"/>
+    <testcase name="should handle click" classname="Button.test" file="Button.test.js" line="12" time="0.4">
+      <failure message="Expected element to be visible" type="Error">Error: Expected element to be visible
+    at Object.DOT anonymous (Button.test.js:15:5)
+Error: Expected element to be visible</failure>
+      <system-err>console warning: deprecated</system-err>
+    </testcase>
+    <testcase name="should disable" classname="Button.test" file="Button.test.js" line="20" time="0.2"/>
+  </testsuite>
+</testsuites>
