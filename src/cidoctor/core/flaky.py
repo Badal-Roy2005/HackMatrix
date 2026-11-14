@@ -127,6 +127,7 @@ def evaluate_test(
     threshold: float,
     min_runs: int,
     main_branch: str,
+    test: str = "unknown",
 ) -> FlakyVerdict:
     """Evaluate a flaky-test verdict for a test's run history.
 
@@ -138,11 +139,12 @@ def evaluate_test(
             is considered flaky (when outcomes are mixed).
         min_runs: minimum number of runs required for a conclusive verdict.
         main_branch: the branch treated as the main branch.
+        test: the test name, used for the verdict. Defaults to ``"unknown"``.
 
     Returns:
         A :class:`FlakyVerdict`.
     """
-    test_name = history[0].get("test", "unknown") if history else "unknown"
+    test_name = test
     n = len(history)
 
     # Rule 1: insufficient data (checked first, so short histories can never be
